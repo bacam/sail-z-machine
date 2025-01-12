@@ -190,7 +190,7 @@ function print_zscii(char : zscii) -> unit = {
     0b0000001101 => putchar(10),
     _ => (),
   };
-  if 0b0000100000 <=_u char & char <=_u 0b0001111111 then putchar(unsigned(char)) else
+  if 0b0000100000 <=_u char & char <=_u 0b0001111110 then putchar(unsigned(char)) else
   unimplemented("non-ascii characters")
 }
 
@@ -205,4 +205,32 @@ function print_zscii_string(s : list(zscii)) -> unit = {
       }
     }
   }
+}
+
+val encode_zscii : forall 'n. (implicit('n), vector('n, bits(5)), nat, bits(8)) -> (vector('n, bits(5)), nat)
+
+function encode_zscii(dest_size, dest, start, char) = {
+  // To lower case
+  let norm_char = if char >=_u 0x41 & char <=_u 0x5a then char + 0x20 else char;
+  if char >=_u 0x61 & char <=_u 0x7a then {
+    if start < dest_size then {
+      var result = dest;
+      result[start] = truncate(char - 0x5b, 5);
+      (result, start + 1)
+    } else (dest, start)
+  } else {
+    unimplemented("non a-z character")
+  }
+}
+
+val pack_zchars : forall 'n, 'n in {2,3}. (implicit('n), vector('n * 3, bits(5))) -> vector('n * 2, bits(8))
+function pack_zchars(triplets, zchars) = {
+  var result : vector('n * 2, bits(8)) = vector_init(0x00);
+  foreach (i from 0 to ('n - 1)) {
+    result[i * 2] = 0b0 @ zchars[i * 3] @ zchars[i * 3 + 1][4..3];
+    result[i * 2 + 1] = zchars[i * 3 + 1][2..0] @ zchars[i * 3 + 2];
+  };
+  // TODO: not sure if this is necessary, or if it should appear for truncated words
+  result[('n - 1) * 2] = result[('n - 1) * 2] | 0x80;
+  result
 }

@@ -1,8 +1,14 @@
 default Order dec
 $include <prelude.sail>
+$include <mapping.sail>
 
 overload operator - = { sub_bits }
 overload append = { concat_str }
+
+val "string_hd" : string -> int
+function string_destruct(s : string) -> option((int, string)) = {
+  if s == "" then None() else Some((string_hd(s), string_drop(s, 1)))
+}
 
 // as in Arm
 

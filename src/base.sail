@@ -7,6 +7,7 @@ union exception = {
   NestedAbbreviation : unit,
   MalformedInstruction : string,
   LoadAddressOverflow : bits(20),
+  InvalidDictionaryEntryLength : int,
   Unreachable : unit,
 }
 
@@ -18,3 +19,4 @@ function unreachable(msg) = throw unreachable(msg)
 
 val warn : string -> unit
 
+val "read_command_plain" : int -> string
