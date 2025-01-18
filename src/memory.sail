@@ -21,7 +21,7 @@ function write_word(addr : address, w : bits(16)) -> unit = {
 // Totally going to regret using lists
 register locals : list(bits(16)) = [||]
 register stack : list(bits(16)) = [||]
-type stack_frame = (list(bits(16)), list(bits(16)), option(bits(8)))
+type stack_frame = (list(bits(16)), list(bits(16)), option(bits(8)), address)
 register routine_stack : list(stack_frame) = [||]
 
 function pop() -> bits(16) = {
@@ -78,15 +78,15 @@ function write_variable(vr : bits(8), vl : bits(16)) -> unit = {
 function routine_offset() -> address = sail_zero_extend(read_word(0x00028), 20)
 function strings_offset() -> address = sail_zero_extend(read_word(0x0002a), 20)
 
-enum pack_type = {RoutineCall, PrintPaddr}
+enum pack_type = {PackCall, PackPrint}
 
 function unpack_address(w : bits(16), t : pack_type) -> address = {
   let w = sail_zero_extend(w, 20);
   if version <= 3 then w << 1
   else if version <= 5 then w << 2
   else if version <= 7 then match t {
-    RoutineCall => w << 2 + routine_offset(),
-    PrintPaddr  => w << 2 + strings_offset(),
+    PackCall  => w << 2 + routine_offset(),
+    PackPrint => w << 2 + strings_offset(),
   }
   else w << 3
 }

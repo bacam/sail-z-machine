@@ -4,11 +4,24 @@ val fetch_byte : unit -> bits(8)
 enum operand_type = {LargeConst, SmallConst, Variable, Omitted}
 
 type operand = bits(16)
+struct branch = {
+  direction : bool,
+  offset : bits(14),
+}
+
+function perform_branch(branch : branch, cond : bool) -> unit = {
+  let cond = if branch.direction then cond else not_bool(cond);
+  if cond then {
+    if branch.offset == 0b00000000000000 then routine_return(0x0000)
+    else if branch.offset == 0b00000000000001 then routine_return(0x0001)
+    else PC = PC + sail_sign_extend(branch.offset, 20) - 0x00002
+  }
+}
 
 // Some opcodes are followed by more data than the generic operands
 val fetch_result_destination : unit -> bits(8)
 val fetch_string : unit -> list(zscii)
-val fetch_branch : unit -> (bool, bits(14))
+val fetch_branch : unit -> branch
 
 scattered union instr
 
@@ -16,6 +29,7 @@ val decode_0op : bits(4) -> instr
 val decode_1op : (bits(4), operand) -> instr
 val decode_2op : (bits(5), operand, operand) -> instr
 val decode_var : (bits(5), list(operand)) -> instr
+val decode_je : (list(operand)) -> instr
 
 val execute : instr -> unit
 
@@ -24,6 +38,26 @@ scattered function decode_1op
 scattered function decode_2op
 scattered function decode_var
 scattered function execute
+
+union clause instr = JE : (operand, list(operand), branch)
+function clause decode_2op (0b00001, a, b) = JE(a, [| b |], fetch_branch())
+function decode_je(operands) = match operands {
+  [| |] => throw MalformedInstruction("je with no operands"),
+  [| _ |] => throw MalformedInstruction("je with 1 operand"),
+  h :: t => JE (h, t, fetch_branch())
+}
+// TODO: is this the right semantics for >2 operands?
+function clause execute JE(a, bs, branch) = {
+  var bs' = bs;
+  var cond : bool = false;
+  while is_cons(bs') do {
+    let (h,t) = head_tail(bs');
+    cond = cond | a == h;
+    bs' = t;
+  };
+  perform_branch(branch, cond)
+}
+
 
 union clause instr = LoadB : (operand, operand, bits(8))
 function clause decode_2op (0b10000, x, y) = LoadB(x,y,fetch_result_destination())
@@ -60,27 +94,30 @@ function clause decode_2op (0b01101, x, y) = {
 }
 function clause execute Store(vr, vl) = write_variable(vr, vl)
 
-union clause instr = JZ : (operand, bool, bits(14))
-function clause decode_1op (0x0, x) = {
-  let (direction, offset) = fetch_branch();
-  JZ(x, direction, offset)
-}
-function clause execute JZ(operand, direction, offset) = {
-  let cond = operand == 0x0000;
-  let cond = if direction then cond else not_bool(cond);
-  if cond then {
-    if offset == 0b00000000000000 then unimplemented("ret false")
-    else if offset == 0b00000000000001 then unimplemented("ret true")
-    else PC = PC + sail_sign_extend(offset, 20) - 0x00002
-  }
+union clause instr = JZ : (operand, branch)
+function clause decode_1op (0x0, x) = JZ(x, fetch_branch())
+function clause execute JZ(operand, branch) = perform_branch(branch, operand == 0x0000)
+
+union clause instr = PrintPaddr : operand
+function clause decode_1op (0xd, x) = PrintPaddr(x)
+function clause execute PrintPaddr(paddr) = {
+  let (_, s) = read_z_coded_string(unpack_address(paddr, PackPrint));
+  print_zscii_string(s)
 }
 
 union clause instr = Load : (operand, bits(8))
-
 // TODO: check what the operand actually is; variable number or value?
 function clause decode_1op (0xe, x) = Load(x, fetch_result_destination())
 
 function clause execute Load(x, r) = write_variable(r, x)
+
+union clause instr = RTrue : unit
+function clause decode_0op 0x0 = RTrue()
+function clause execute RTrue() = routine_return(0x0001)
+
+union clause instr = RFalse : unit
+function clause decode_0op 0x1 = RFalse()
+function clause execute RFalse() = routine_return(0x0000)
 
 union clause instr = Print : list(zscii)
 function clause decode_0op 0x2 = Print(fetch_string())
@@ -106,7 +143,7 @@ union clause instr = Call : (address, list(operand), bits(8))
 function clause decode_var (0b00000, operands) =
   match operands {
     [| |] => throw MalformedInstruction("call without routine"),
-    routine::arguments => Call(unpack_address(routine, RoutineCall), arguments, fetch_result_destination()),
+    routine::arguments => Call(unpack_address(routine, PackCall), arguments, fetch_result_destination()),
   }
 function clause execute Call(routine, arguments, destination) =
   if routine == 0x00000 then write_variable(destination, 0x0000) else {
@@ -119,7 +156,7 @@ function clause execute Call(routine, arguments, destination) =
     new_locals = v::new_locals;
   };
   new_locals = locals_from_arguments @ new_locals;
-  routine_stack = (locals, stack, Some(destination))::routine_stack;
+  routine_stack = (locals, stack, Some(destination), PC)::routine_stack;
   locals = new_locals;
   stack = [| |];
   PC = add_bits_int(routine, 2*number_locals+1);
@@ -152,7 +189,7 @@ function clause execute StoreB(array, index, value) = {
 union clause instr = Read : (operand, operand, option((operand, address)))
 function clause decode_var (0b00100, [| text, parse |]) = Read(text, parse, None())
 function clause decode_var ((0b00100, [| text, parse, time, routine |]) if version >= 4) =
-  Read(text, parse, Some((time, unpack_address(routine, RoutineCall))))
+  Read(text, parse, Some((time, unpack_address(routine, PackCall))))
 function clause decode_var (0b00100, _) = throw MalformedInstruction("read with wrong number of operands")
 
 val byte_is_in : forall 'n. (implicit('n), vector('n, dec, bits(8)), bits(8)) -> bool

@@ -64,7 +64,7 @@ function fetch_var_operand_types() -> list(operand_type) = {
   }
 }
 
-function fetch_branch() -> (bool, bits(14)) = {
+function fetch_branch() -> branch = {
   let b1 = fetch_byte();
   let direction = b1[7] == bitone;
   let offset : bits(14) =
@@ -75,7 +75,7 @@ function fetch_branch() -> (bool, bits(14)) = {
 	b1[5..0] @ b2
       }
     };
-  (direction, offset)
+  struct { direction, offset }
 }
 
 function fetch_and_decode() -> instr = {
@@ -103,6 +103,8 @@ function fetch_and_decode() -> instr = {
       match var_operands {
         0b0 => match operands {
 	  [| operand1, operand2 |] => decode_2op(op, operand1, operand2),
+	  // Section 15 says je takes variable operands, even though 4.5 says 2OPs take 2
+	  _ if op == 0b00001 => decode_je(operands),
 	  _ => throw MalformedInstruction("2op didn't have exactly two operands"),
 	},
 	0b1 => decode_var(op, operands),
