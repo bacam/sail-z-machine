@@ -40,7 +40,7 @@ let a2_later : vector(32, bits(10)) = [
   0b0000110110, // 6
   0b0000110111, // 7
   0b0000111000, // 8
-  0b0000111000, // 9
+  0b0000111001, // 9
   0b0000101110, // .
   0b0000101100, // ,
   0b0000100001, // !
@@ -74,7 +74,7 @@ let a2_v1 : vector(32, bits(10)) = [
   0b0000110110, // 6
   0b0000110111, // 7
   0b0000111000, // 8
-  0b0000111000, // 9
+  0b0000111001, // 9
   0b0000101110, // .
   0b0000101100, // ,
   0b0000100001, // !
@@ -188,10 +188,9 @@ function print_zscii(char : zscii) -> unit = {
     0b0000001001 => putchar(9), // TODO: v6 only
     0b0000001011 => putchar(32), // TODO: v6 only
     0b0000001101 => putchar(10),
-    _ => (),
-  };
-  if 0b0000100000 <=_u char & char <=_u 0b0001111110 then putchar(unsigned(char)) else
-  unimplemented("non-ascii characters")
+    _ if 0b0000100000 <=_u char & char <=_u 0b0001111110 => putchar(unsigned(char)),
+    _ => unimplemented("non-ascii character " @ bits_str(char)),
+  }
 }
 
 function print_zscii_string(s : list(zscii)) -> unit = {

@@ -4,7 +4,7 @@ function main() -> unit = {
   init();
   try {
     while true do {
-      prerr_bits("PC: ", PC);
+      //prerr_bits("PC: ", PC);
       let instr = fetch_and_decode();
       execute(instr)
     }

@@ -1,5 +1,7 @@
 register configuration version : range(1,8) = 3
 
+type operand = bits(16)
+
 union exception = {
   Unimplemented : string, // Missing from this model
   StackUnderflow : unit,
@@ -8,6 +10,7 @@ union exception = {
   MalformedInstruction : string,
   LoadAddressOverflow : bits(20),
   InvalidDictionaryEntryLength : int,
+  InvalidVariableOperand : operand,
   Unreachable : unit,
 }
 

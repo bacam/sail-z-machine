@@ -3,7 +3,6 @@ val fetch_byte : unit -> bits(8)
 
 enum operand_type = {LargeConst, SmallConst, Variable, Omitted}
 
-type operand = bits(16)
 struct branch = {
   direction : bool,
   offset : bits(14),
@@ -16,6 +15,10 @@ function perform_branch(branch : branch, cond : bool) -> unit = {
     else if branch.offset == 0b00000000000001 then routine_return(0x0001)
     else PC = PC + sail_sign_extend(branch.offset, 20) - 0x00002
   }
+}
+
+function decode_variable(operand : operand) -> bits(8) = {
+  if operand >_u 0x00ff then throw InvalidVariableOperand(operand) else truncate(operand, 8)
 }
 
 // Some opcodes are followed by more data than the generic operands
@@ -58,6 +61,39 @@ function clause execute JE(a, bs, branch) = {
   perform_branch(branch, cond)
 }
 
+union clause instr = JL : (operand, operand, branch)
+function clause decode_2op (0b00010, a, b) = JL(a, b, fetch_branch())
+function clause execute JL(a, b, branch) = perform_branch(branch, a <_s b)
+
+union clause instr = JG : (operand, operand, branch)
+function clause decode_2op (0b00010, a, b) = JG(a, b, fetch_branch())
+function clause execute JG(a, b, branch) = perform_branch(branch, a >_s b)
+
+union clause instr = DecChk : (bits(8), operand, branch)
+function clause decode_2op (0b00100, variable, value) = DecChk(decode_variable(variable), value, fetch_branch())
+function clause execute DecChk(variable, value, branch) = {
+  // Assuming signed because dec is signed
+  let v = read_variable(variable) - 0x0001;
+  write_variable(variable, v);
+  perform_branch(branch, v <_s value);
+}
+
+union clause instr = IncChk : (bits(8), operand, branch)
+function clause decode_2op (0b00101, variable, value) = IncChk(decode_variable(variable), value, fetch_branch())
+function clause execute IncChk(variable, value, branch) = {
+  // Assuming signed because dec is signed
+  let v = read_variable(variable) + 0x0001;
+  write_variable(variable, v);
+  perform_branch(branch, v >_s value);
+}
+
+union clause instr = Or : (operand, operand, bits(8))
+function clause decode_2op (0b01000, x, y) = Or(x,y,fetch_result_destination())
+function clause execute Or(x, y, r) = write_variable(r, x | y)
+
+union clause instr = And : (operand, operand, bits(8))
+function clause decode_2op (0b01001, x, y) = And(x,y,fetch_result_destination())
+function clause execute And(x, y, r) = write_variable(r, x & y)
 
 union clause instr = LoadB : (operand, operand, bits(8))
 function clause decode_2op (0b10000, x, y) = LoadB(x,y,fetch_result_destination())
@@ -123,6 +159,14 @@ union clause instr = Print : list(zscii)
 function clause decode_0op 0x2 = Print(fetch_string())
 function clause execute Print(s) = print_zscii_string(s)
 
+union clause instr = PrintRet : list(zscii)
+function clause decode_0op 0x3 = PrintRet(fetch_string())
+function clause execute PrintRet(s) = {
+  print_zscii_string(s);
+  print_endline("");
+  routine_return(0x0001);
+}
+
 union clause instr = Nop : unit
 function clause decode_0op 0x4 = Nop()
 function clause execute Nop() = ()
@@ -139,6 +183,14 @@ function clause decode_var (0b00101, operands) =
   }
 function clause execute PrintChar(char) = print_zscii(char)
 
+union clause instr = PrintNum : operand
+function clause decode_var (0b00110, operands) =
+  match operands {
+    [| n |] => PrintNum(n),
+    _ => throw MalformedInstruction("print_num with invalid operand(s)"),
+  }
+function clause execute PrintNum(n) = print(dec_str(signed(n)))
+
 union clause instr = Call : (address, list(operand), bits(8))
 function clause decode_var (0b00000, operands) =
   match operands {
@@ -147,7 +199,7 @@ function clause decode_var (0b00000, operands) =
   }
 function clause execute Call(routine, arguments, destination) =
   if routine == 0x00000 then write_variable(destination, 0x0000) else {
-  prerr_bits("routine ", routine);
+  //prerr_bits("routine ", routine);
   let number_locals = unsigned(read_byte(routine));
   let locals_from_arguments : list(bits(16)) = list_take(arguments, number_locals);
   var new_locals : list(bits(16)) = [| |];
@@ -160,7 +212,7 @@ function clause execute Call(routine, arguments, destination) =
   locals = new_locals;
   stack = [| |];
   PC = add_bits_int(routine, 2*number_locals+1);
-  prerr_bits("new pc ", PC)
+  //prerr_bits("new pc ", PC)
 }
 
 union clause instr = StoreW : (operand, operand, operand)
