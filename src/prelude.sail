@@ -1,6 +1,7 @@
 default Order dec
 $include <prelude.sail>
 $include <mapping.sail>
+$include <smt.sail>
 
 overload operator - = { sub_bits }
 overload append = { concat_str }
@@ -22,7 +23,9 @@ val putchar = pure {
 
 /* as in RISC-V */
 
+infix 7 >>
 infix 7 <<
+overload operator >> = { sail_shiftright }
 overload operator << = { sail_shiftleft }
 
 infix 4 <_s

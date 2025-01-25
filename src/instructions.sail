@@ -66,13 +66,14 @@ function clause decode_2op (0b00010, a, b) = JL(a, b, fetch_branch())
 function clause execute JL(a, b, branch) = perform_branch(branch, a <_s b)
 
 union clause instr = JG : (operand, operand, branch)
-function clause decode_2op (0b00010, a, b) = JG(a, b, fetch_branch())
+function clause decode_2op (0b00011, a, b) = JG(a, b, fetch_branch())
 function clause execute JG(a, b, branch) = perform_branch(branch, a >_s b)
 
 union clause instr = DecChk : (bits(8), operand, branch)
 function clause decode_2op (0b00100, variable, value) = DecChk(decode_variable(variable), value, fetch_branch())
 function clause execute DecChk(variable, value, branch) = {
   // Assuming signed because dec is signed
+  // The spec says this happens "in place", but that's meaningless because the stack ends up the same length
   let v = read_variable(variable) - 0x0001;
   write_variable(variable, v);
   perform_branch(branch, v <_s value);
@@ -87,6 +88,10 @@ function clause execute IncChk(variable, value, branch) = {
   perform_branch(branch, v >_s value);
 }
 
+union clause instr = Test : (operand, operand, branch)
+function clause decode_2op (0b00111, bitmap, flags) = Test(bitmap, flags, fetch_branch())
+function clause execute Test(bitmap, flags, branch) = perform_branch(branch, (bitmap & flags) == flags)
+
 union clause instr = Or : (operand, operand, bits(8))
 function clause decode_2op (0b01000, x, y) = Or(x,y,fetch_result_destination())
 function clause execute Or(x, y, r) = write_variable(r, x | y)
@@ -94,6 +99,32 @@ function clause execute Or(x, y, r) = write_variable(r, x | y)
 union clause instr = And : (operand, operand, bits(8))
 function clause decode_2op (0b01001, x, y) = And(x,y,fetch_result_destination())
 function clause execute And(x, y, r) = write_variable(r, x & y)
+
+union clause instr = TestAttr : (operand, operand, branch)
+function clause decode_2op (0b01010, object, attribute) = TestAttr(object, attribute, fetch_branch())
+function clause execute TestAttr(object, attribute, branch) = {
+  let cond = test_attribute(object, attribute);
+  perform_branch(branch, cond)
+}
+
+union clause instr = SetAttr : (operand, operand)
+function clause decode_2op (0b01011, object, attribute) = SetAttr(object, attribute)
+function clause execute SetAttr(object, attribute) = set_attribute(object, attribute)
+
+union clause instr = InsertObj : (operand, operand)
+function clause decode_2op (0b01110, object, destination) = InsertObj(object, destination)
+function clause execute InsertObj(object, destination) = {
+  set_object_sibling(object, object_child(destination));
+  set_object_child(destination, object);
+}
+
+union clause instr = LoadW : (operand, operand, bits(8))
+function clause decode_2op (0b01111, x, y) = LoadW(x,y,fetch_result_destination())
+function clause execute LoadW(array, index, destination) = {
+  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20) << 1;
+  if addr >_u 0x0fffe then throw LoadAddressOverflow(addr);
+  write_variable(destination, read_word(addr))
+}
 
 union clause instr = LoadB : (operand, operand, bits(8))
 function clause decode_2op (0b10000, x, y) = LoadB(x,y,fetch_result_destination())
@@ -103,12 +134,11 @@ function clause execute LoadB(array, index, destination) = {
   write_variable(destination, sail_zero_extend(read_byte(addr), 16))
 }
 
-union clause instr = LoadW : (operand, operand, bits(8))
-function clause decode_2op (0b01111, x, y) = LoadW(x,y,fetch_result_destination())
-function clause execute LoadW(array, index, destination) = {
-  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20) << 1;
-  if addr >_u 0x0fffe then throw LoadAddressOverflow(addr);
-  write_variable(destination, read_word(addr))
+union clause instr = GetProp : (operand, operand, bits(8))
+function clause decode_2op (0b10001, x, y) = GetProp(x, y, fetch_result_destination())
+function clause execute GetProp(object, property, r) = {
+  let value = get_property(object, property);
+  write_variable(r, value)
 }
 
 union clause instr = Add : (operand, operand, bits(8))
@@ -124,15 +154,61 @@ function clause decode_2op (0b10110, x, y) = Mul(x,y,fetch_result_destination())
 function clause execute Mul(x, y, r) = write_variable(r, add_bits_int(sail_zeros(16), signed(x) * signed(y)))
 
 union clause instr = Store : (bits(8), operand)
-function clause decode_2op (0b01101, x, y) = {
-  if x >_u 0x00ff then throw NoSuchLocal(unsigned(x));
-  Store(truncate(x, 8), y)
-}
-function clause execute Store(vr, vl) = write_variable(vr, vl)
+function clause decode_2op (0b01101, variable, value) = Store(decode_variable(variable), value)
+function clause execute Store(vr, vl) = write_variable_no_push(vr, vl)
 
 union clause instr = JZ : (operand, branch)
 function clause decode_1op (0x0, x) = JZ(x, fetch_branch())
 function clause execute JZ(operand, branch) = perform_branch(branch, operand == 0x0000)
+
+union clause instr = GetChild : (operand, bits(8), branch)
+function clause decode_1op (0x2, object) = {
+  let r = fetch_result_destination();
+  let b = fetch_branch();
+  GetChild(object, r, b)
+}
+function clause execute GetChild(object, r, branch) = {
+  let child = object_child(object);
+  write_variable(r, child);
+  perform_branch(branch, child == 0x0000)
+}
+
+union clause instr = GetParent : (operand, bits(8))
+function clause decode_1op (0x3, object) = GetParent(object, fetch_result_destination())
+function clause execute GetParent(object, r) = {
+  let parent = object_parent(object);
+  write_variable(r, parent);
+}
+
+union clause instr = Inc : bits(8)
+function clause decode_1op (0x5, v) = Inc(decode_variable(v))
+function clause execute Inc(variable) = {
+  let value = read_variable(variable);
+  write_variable(variable, value + 0x0001)
+}
+
+union clause instr = Dec : bits(8)
+function clause decode_1op (0x6, v) = Dec(decode_variable(v))
+function clause execute Dec(variable) = {
+  let value = read_variable(variable);
+  write_variable(variable, value - 0x0001)
+}
+  
+union clause instr = PrintObj : operand
+function clause decode_1op (0xa, x) = PrintObj(x)
+function clause execute PrintObj(object) = {
+  let base_addr = object_properties(object);
+  let (_, s) = read_z_coded_string(base_addr + 0x00001);
+  print_zscii_string(s)
+}
+
+union clause instr = Ret : operand
+function clause decode_1op (0xb, x) = Ret(x)
+function clause execute Ret(value) = routine_return(value)
+
+union clause instr = Jump : operand
+function clause decode_1op (0xc, offset) = Jump(offset)
+function clause execute Jump(offset) = PC = PC + sail_sign_extend(offset, 20) - 0x00002
 
 union clause instr = PrintPaddr : operand
 function clause decode_1op (0xd, x) = PrintPaddr(x)
@@ -141,11 +217,9 @@ function clause execute PrintPaddr(paddr) = {
   print_zscii_string(s)
 }
 
-union clause instr = Load : (operand, bits(8))
-// TODO: check what the operand actually is; variable number or value?
-function clause decode_1op (0xe, x) = Load(x, fetch_result_destination())
-
-function clause execute Load(x, r) = write_variable(r, x)
+union clause instr = Load : (bits(8), bits(8))
+function clause decode_1op (0xe, v) = Load(decode_variable(v), fetch_result_destination())
+function clause execute Load(v, r) = write_variable(r, read_variable_no_pop(v))
 
 union clause instr = RTrue : unit
 function clause decode_0op 0x0 = RTrue()
@@ -171,9 +245,18 @@ union clause instr = Nop : unit
 function clause decode_0op 0x4 = Nop()
 function clause execute Nop() = ()
 
+union clause instr = RetPopped : unit
+function clause decode_0op 0x8 = RetPopped()
+function clause execute RetPopped() = routine_return(pop())
+
 union clause instr = NewLine : unit
 function clause decode_0op 0xb = NewLine()
 function clause execute NewLine() = print_endline("")
+
+union clause instr = PutProp : (operand, operand, operand)
+function clause decode_var (0b00011, [| object, property, value |]) = PutProp(object, property, value)
+function clause decode_var (0b00011, _) = throw MalformedInstruction("put_prop with invalid operand(s)")
+function clause execute PutProp(object, property, value) = set_property(object, property, value)
 
 union clause instr = PrintChar : bits(10)
 function clause decode_var (0b00101, operands) =
@@ -264,7 +347,7 @@ function read_dictionary_info(dictionary : address, number_word_separators : nat
   let info : dictionary_info = struct {
     entry_length = unsigned(read_byte(add_bits_int(dictionary, number_word_separators + 1))),
     number_entries = unsigned(read_word(add_bits_int(dictionary, number_word_separators + 2))),
-    entries_start = add_bits_int(dictionary, number_word_separators + 3),
+    entries_start = add_bits_int(dictionary, number_word_separators + 4),
   };
   if info.entry_length < (if version <= 3 then 4 else 6) then throw InvalidDictionaryEntryLength(info.entry_length);
   info
@@ -360,7 +443,7 @@ function clause execute Read(text, parse, timer) = {
           k = k + 1;
           if j + k < total_characters then char = read_byte(add_bits_int(start_addr, j + k));
         };
-        let word_entry = add_bits_int(parse_addr, 1 + 4 * words);
+        let word_entry = add_bits_int(parse_addr, 2 + 4 * words);
         let dictionary_entry = lookup_entry(dictionary_info, pack_zchars(encoded));
         // TODO: if dictionary_entry >_u 0x0ffff then
         write_word(word_entry, truncate(dictionary_entry, 16));

@@ -11,6 +11,9 @@ union exception = {
   LoadAddressOverflow : bits(20),
   InvalidDictionaryEntryLength : int,
   InvalidVariableOperand : operand,
+  BadAttribute : (bits(16), bits(16)),
+  PropertyNotFound : (bits(16), bits(16)),
+  WrongPropertySize : (bits(16), bits(16)),
   Unreachable : unit,
 }
 

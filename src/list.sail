@@ -94,6 +94,15 @@ function list_take(l, n) = {
       }
     }
   };
-  l_out
+  reverse(l_out)
+}
+
+val list_of_vector : forall ('t : Type) 'n. vector('n, 't) -> list('t)
+
+function list_of_vector(v) = {
+  var l : list('t) = [| |];
+  let len = length(v);
+  foreach (i from (len - 1) downto 0) l = v[i]::l;
+  l
 }
 

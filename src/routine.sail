@@ -1,4 +1,5 @@
 function routine_return(v : bits(16)) -> unit = {
+//prerr_endline("return");
   match routine_stack {
     [| |] => unimplemented("end of stack"),
     (locals', stack', destination, caller_pc)::t => {

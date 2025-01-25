@@ -41,14 +41,14 @@ function push(w : bits(16)) -> unit = {
 
 function global_variable_address(v : bits(8)) -> address = {
   let table = read_word(0x0000c);
-  sail_zero_extend(table, 20) + sail_zero_extend(v - 0x10, 20);
+  sail_zero_extend(table, 20) + sail_zero_extend(v - 0x10, 20) << 1;
 }
 
 function read_local_variable(vr : bits(8)) -> bits(16) = {
   let i = unsigned(vr - 0x01);
   match nth(locals, i) {
   None() => throw NoSuchLocal(i),
-  Some(vl) => vl
+  Some(vl) => { /*prerr_bits("read local ", vr); prerr_bits("    val ", vl); prerr_int("depth ", length(routine_stack));*/ vl }
   }
 }
 
@@ -61,7 +61,22 @@ function read_variable (vr : bits(8)) -> bits(16) = {
   else read_word(global_variable_address(vr))
 }
 
+function read_variable_no_pop (vr : bits(8)) -> bits(16) = {
+  // stack
+  if vr == 0x00 then
+    match stack {
+      [||] => throw StackUnderflow(),
+      h::_ => h,
+    }
+  // local
+  else if vr <_u 0x10 then read_local_variable(vr)
+  // global
+  else read_word(global_variable_address(vr))
+}
+
 function write_local_variable(vr : bits(8), vl : bits(16)) -> unit = {
+//prerr_bits("write local ", vr);
+//prerr_bits("      val ", vl); prerr_int("depth ", length(routine_stack));
   let i = unsigned(vr - 0x01);
   match set_nth(locals, i, vl) {
   None() => throw NoSuchLocal(i),
@@ -75,6 +90,17 @@ function write_variable(vr : bits(8), vl : bits(16)) -> unit = {
   else write_word(global_variable_address(vr), vl)
 }
 
+function write_variable_no_push(vr : bits(8), vl : bits(16)) -> unit = {
+  if vr == 0x00 then
+    match stack {
+      [||] => throw StackUnderflow(),
+      _::t => stack = vl::t,
+    }
+  else if vr <_u 0x10 then write_local_variable(vr, vl)
+  else write_word(global_variable_address(vr), vl)
+}
+
+function object_table() -> address = sail_zero_extend(read_word(0x0000a), 20)
 function routine_offset() -> address = sail_zero_extend(read_word(0x00028), 20)
 function strings_offset() -> address = sail_zero_extend(read_word(0x0002a), 20)
 
