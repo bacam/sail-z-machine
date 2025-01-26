@@ -19,3 +19,14 @@ void read_command_plain(sail_string *s, sail_int smax) {
   }
   (*s)[r] = 0;
 }
+
+void random_range(sail_int *r, sail_int low_s, sail_int high_s) {
+  mach_int low = CREATE_OF(mach_int, sail_int)(low_s);
+  mach_int high = CREATE_OF(mach_int, sail_int)(high_s);
+  /* rand should go high enough, only have 16bit values */
+  mpz_set_ui(*r, low + (rand() % (high -low)));
+}
+unit random_seed(sail_int seed_s) {
+  mach_int seed = CREATE_OF(mach_int, sail_int)(seed_s);
+  srand(seed);
+}

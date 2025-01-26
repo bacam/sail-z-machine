@@ -11,6 +11,9 @@ function string_destruct(s : string) -> option((int, string)) = {
   if s == "" then None() else Some((string_hd(s), string_drop(s, 1)))
 }
 
+val "random_range" : (int, int) -> int
+val "random_seed" : int -> unit
+
 // as in Arm
 
 val putchar = pure {
@@ -24,8 +27,10 @@ val putchar = pure {
 /* as in RISC-V */
 
 infix 7 >>
+infix 7 >>>
 infix 7 <<
 overload operator >> = { sail_shiftright }
+overload operator >>> = { sail_arith_shiftright }
 overload operator << = { sail_shiftleft }
 
 infix 4 <_s

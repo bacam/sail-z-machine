@@ -13,9 +13,9 @@ function main() -> unit = {
   */
   var instr_pc = PC;
   try {
-    while true do {
+    while not_bool(quit) do {
       instr_pc = PC;
-      //prerr_bits("PC: ", PC);
+      prerr_bits("PC: ", PC);
       let instr = fetch_and_decode();
       execute(instr)
     }

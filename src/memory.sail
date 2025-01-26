@@ -21,7 +21,8 @@ function write_word(addr : address, w : bits(16)) -> unit = {
 // Totally going to regret using lists
 register locals : list(bits(16)) = [||]
 register stack : list(bits(16)) = [||]
-type stack_frame = (list(bits(16)), list(bits(16)), option(bits(8)), address)
+register number_arguments : int = 0
+type stack_frame = (list(bits(16)), list(bits(16)), int, option(bits(8)), address)
 register routine_stack : list(stack_frame) = [||]
 
 function pop() -> bits(16) = {
@@ -29,12 +30,14 @@ function pop() -> bits(16) = {
     [||] => throw StackUnderflow(),
     h::t => {
       stack = t;
+//prerr_bits("Pop at level " @ dec_str(length(routine_stack)) @ " of ", h);
       h
     }
   }
 }
 
 function push(w : bits(16)) -> unit = {
+//prerr_bits("Push at level " @ dec_str(length(routine_stack)) @ " of ", w);
   // TODO: warn when over a reasonable limit?
   stack = w::stack
 }
@@ -48,7 +51,7 @@ function read_local_variable(vr : bits(8)) -> bits(16) = {
   let i = unsigned(vr - 0x01);
   match nth(locals, i) {
   None() => throw NoSuchLocal(i),
-  Some(vl) => { /*prerr_bits("read local ", vr); prerr_bits("    val ", vl); prerr_int("depth ", length(routine_stack));*/ vl }
+  Some(vl) => /*{ prerr_bits("read local ", vr); prerr_bits("    val ", vl); prerr_int("depth ", length(routine_stack)); vl }*/ vl
   }
 }
 
@@ -115,4 +118,17 @@ function unpack_address(w : bits(16), t : pack_type) -> address = {
     PackPrint => w << 2 + strings_offset(),
   }
   else w << 3
+}
+
+function file_length() -> int = {
+  let header_value = read_word(0x0001a);
+  let multiplier : int = match version {
+    1 => 2,
+    2 => 2,
+    3 => 2,
+    4 => 4,
+    5 => 4,
+    _ => 8,
+  };
+  unsigned(header_value) * multiplier
 }

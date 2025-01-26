@@ -81,11 +81,22 @@ function fetch_branch() -> branch = {
 function fetch_and_decode() -> instr = {
   let opcode1 = fetch_byte();
   match opcode1 {
-    0xbe => unimplemented("extended"),
+    0xbe if version >= 5 => {
+      let op = fetch_byte();
+      var operand_types = fetch_var_operand_types();
+      var operands : list(bits(16)) = [| |];
+      while is_cons(operand_types) do {
+        let (ty,tys) = head_tail(operand_types);
+	operands = fetch_operand(ty)::operands;
+	operand_types = tys;
+      };
+      operands = reverse(operands);
+      decode_ext(op, operands)
+    },
     0b11 @ var_operands @ (op : bits(5)) => {
       var operand_types = fetch_var_operand_types();
       // call_vs2 and call_vn2 can take up to 8 operands
-      if op == 0b01100 | op == 0b11010 then {
+      if var_operands == 0b1 & (op == 0b01100 | op == 0b11010) then {
         let types2 = fetch_var_operand_types();
 	if length(operand_types) < 4 & is_cons(types2) then {
 	  throw MalformedInstruction("Bad second operand types byte")

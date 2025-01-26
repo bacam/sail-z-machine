@@ -33,6 +33,9 @@ val decode_1op : (bits(4), operand) -> instr
 val decode_2op : (bits(5), operand, operand) -> instr
 val decode_var : (bits(5), list(operand)) -> instr
 val decode_je : (list(operand)) -> instr
+val decode_ext : (bits(8), list(operand)) -> instr
+
+val description : instr <-> string
 
 val execute : instr -> unit
 
@@ -40,6 +43,7 @@ scattered function decode_0op
 scattered function decode_1op
 scattered function decode_2op
 scattered function decode_var
+scattered function decode_ext
 scattered function execute
 
 union clause instr = JE : (operand, list(operand), branch)
@@ -88,6 +92,10 @@ function clause execute IncChk(variable, value, branch) = {
   perform_branch(branch, v >_s value);
 }
 
+union clause instr = JIn : (operand, operand, branch)
+function clause decode_2op (0b00110, obj1, obj2) = JIn(obj1, obj2, fetch_branch())
+function clause execute JIn(obj1, obj2, branch) = perform_branch(branch, object_parent(obj1) == obj2)
+
 union clause instr = Test : (operand, operand, branch)
 function clause decode_2op (0b00111, bitmap, flags) = Test(bitmap, flags, fetch_branch())
 function clause execute Test(bitmap, flags, branch) = perform_branch(branch, (bitmap & flags) == flags)
@@ -111,9 +119,15 @@ union clause instr = SetAttr : (operand, operand)
 function clause decode_2op (0b01011, object, attribute) = SetAttr(object, attribute)
 function clause execute SetAttr(object, attribute) = set_attribute(object, attribute)
 
+union clause instr = ClearAttr : (operand, operand)
+function clause decode_2op (0b01100, object, attribute) = ClearAttr(object, attribute)
+function clause execute ClearAttr(object, attribute) = clear_attribute(object, attribute)
+
 union clause instr = InsertObj : (operand, operand)
 function clause decode_2op (0b01110, object, destination) = InsertObj(object, destination)
 function clause execute InsertObj(object, destination) = {
+  // TODO: Should we remove object beforehand?
+  set_object_parent(object, destination);
   set_object_sibling(object, object_child(destination));
   set_object_child(destination, object);
 }
@@ -141,6 +155,19 @@ function clause execute GetProp(object, property, r) = {
   write_variable(r, value)
 }
 
+union clause instr = GetPropAddr : (operand, operand, bits(8))
+function clause decode_2op (0b10010, x, y) = GetPropAddr(x, y, fetch_result_destination())
+function clause execute GetPropAddr(object, property, r) = {
+  match get_property_address(object, property, false) {
+    Some((addr, _)) => write_variable(r, truncate(addr, 16)), // TODO: overflow
+    None() => write_variable(r, 0x0000),
+  }
+}
+
+union clause instr = GetNextProp : (operand, operand, bits(8))
+function clause decode_2op (0b10011, obj, prop) = GetNextProp(obj, prop, fetch_result_destination())
+function clause execute GetNextProp(object, property, r) = write_variable(r, get_next_property(object, property))
+
 union clause instr = Add : (operand, operand, bits(8))
 function clause decode_2op (0b10100, x, y) = Add(x,y,fetch_result_destination())
 function clause execute Add(x, y, r) = write_variable(r, x + y)
@@ -153,6 +180,30 @@ union clause instr = Mul : (operand, operand, bits(8))
 function clause decode_2op (0b10110, x, y) = Mul(x,y,fetch_result_destination())
 function clause execute Mul(x, y, r) = write_variable(r, add_bits_int(sail_zeros(16), signed(x) * signed(y)))
 
+union clause instr = Div : (operand, operand, bits(8))
+function clause decode_2op (0b10111, x, y) = Div(x,y,fetch_result_destination())
+function clause execute Div(x, y, r) = {
+  if y == 0x0000 then throw DivisionByZero();
+  // TODO: check which division
+  write_variable(r, add_bits_int(sail_zeros(16), tdiv_int(signed(x), signed(y))))
+}
+
+union clause instr = Mod : (operand, operand, bits(8))
+function clause decode_2op (0b11000, x, y) = Mod(x,y,fetch_result_destination())
+function clause execute Mod(x, y, r) = {
+  if y == 0x0000 then throw DivisionByZero();
+  // TODO: check which division
+  write_variable(r, add_bits_int(sail_zeros(16), tmod_int(signed(x), signed(y))))
+}
+
+union clause instr = Call2s : (address, operand, bits(8))
+function clause decode_2op ((0b11001, routine, arg) if version >= 4) = Call2s(unpack_address(routine, PackCall), arg, fetch_result_destination())
+function clause execute Call2s(routine, arg, r) = routine_call(routine, [| arg |], Some(r))
+
+union clause instr = Call2n : (address, operand)
+function clause decode_2op ((0b11010, routine, arg) if version >= 5) = Call2n(unpack_address(routine, PackCall), arg)
+function clause execute Call2n(routine, arg) = routine_call(routine, [| arg |], None())
+
 union clause instr = Store : (bits(8), operand)
 function clause decode_2op (0b01101, variable, value) = Store(decode_variable(variable), value)
 function clause execute Store(vr, vl) = write_variable_no_push(vr, vl)
@@ -160,6 +211,18 @@ function clause execute Store(vr, vl) = write_variable_no_push(vr, vl)
 union clause instr = JZ : (operand, branch)
 function clause decode_1op (0x0, x) = JZ(x, fetch_branch())
 function clause execute JZ(operand, branch) = perform_branch(branch, operand == 0x0000)
+
+union clause instr = GetSibling : (operand, bits(8), branch)
+function clause decode_1op (0x1, object) = {
+  let r = fetch_result_destination();
+  let b = fetch_branch();
+  GetSibling(object, r, b)
+}
+function clause execute GetSibling(object, r, branch) = {
+  let sibling = object_sibling(object);
+  write_variable(r, sibling);
+  perform_branch(branch, sibling != 0x0000)
+}
 
 union clause instr = GetChild : (operand, bits(8), branch)
 function clause decode_1op (0x2, object) = {
@@ -170,7 +233,7 @@ function clause decode_1op (0x2, object) = {
 function clause execute GetChild(object, r, branch) = {
   let child = object_child(object);
   write_variable(r, child);
-  perform_branch(branch, child == 0x0000)
+  perform_branch(branch, child != 0x0000)
 }
 
 union clause instr = GetParent : (operand, bits(8))
@@ -179,6 +242,10 @@ function clause execute GetParent(object, r) = {
   let parent = object_parent(object);
   write_variable(r, parent);
 }
+
+union clause instr = GetPropLen : (address, bits(8))
+function clause decode_1op (0x4, x) = GetPropLen(sail_zero_extend(x, 20), fetch_result_destination())
+function clause execute GetPropLen(prop, r) = write_variable(r, get_property_length(prop))
 
 union clause instr = Inc : bits(8)
 function clause decode_1op (0x5, v) = Inc(decode_variable(v))
@@ -193,7 +260,32 @@ function clause execute Dec(variable) = {
   let value = read_variable(variable);
   write_variable(variable, value - 0x0001)
 }
-  
+
+union clause instr = PrintAddr : operand
+function clause decode_1op (0x7, x) = PrintAddr(x)
+function clause execute PrintAddr(addr) = {
+  let (_, s) = read_z_coded_string(sail_zero_extend(addr, 20));
+  print_zscii_string(s)
+}
+
+union clause instr = Call1s : (address, bits(8))
+function clause decode_1op ((0x8, routine) if version >= 4) = Call1s(unpack_address(routine, PackCall), fetch_result_destination())
+function clause decode_1op (0x8, _) = throw MalformedInstruction("call_1s on version < 4")
+function clause execute Call1s(routine, r) = routine_call(routine, [| |], Some(r))
+
+union clause instr = RemoveObj : operand
+function clause decode_1op (0x9, obj) = RemoveObj(obj)
+function clause execute RemoveObj(object) = {
+  let parent = object_parent(object);
+  var sibling = object_child(parent);
+  if sibling == object then set_object_child(parent, object_sibling(object)) else {
+    while sibling != 0x0000 & object_sibling(sibling) != object do sibling = object_sibling(sibling);
+    if sibling != 0x0000 then set_object_sibling(sibling, object_sibling(object));
+  };
+  set_object_sibling(object, 0x0000);
+  set_object_parent(object, 0x0000)
+}
+
 union clause instr = PrintObj : operand
 function clause decode_1op (0xa, x) = PrintObj(x)
 function clause execute PrintObj(object) = {
@@ -220,6 +312,14 @@ function clause execute PrintPaddr(paddr) = {
 union clause instr = Load : (bits(8), bits(8))
 function clause decode_1op (0xe, v) = Load(decode_variable(v), fetch_result_destination())
 function clause execute Load(v, r) = write_variable(r, read_variable_no_pop(v))
+
+union clause instr = Not : (operand, bits(8))
+function clause decode_1op ((0xf, v) if version <= 4) = Not(v, fetch_result_destination())
+function clause execute Not(v, r) = write_variable(r, not_vec(v))
+
+union clause instr = Call1n : address
+function clause decode_1op (0xf, v) = Call1n(unpack_address(v, PackCall))
+function clause execute Call1n(routine) = routine_call(routine, [| |], None())
 
 union clause instr = RTrue : unit
 function clause decode_0op 0x0 = RTrue()
@@ -249,9 +349,33 @@ union clause instr = RetPopped : unit
 function clause decode_0op 0x8 = RetPopped()
 function clause execute RetPopped() = routine_return(pop())
 
+union clause instr = Quit : unit
+function clause decode_0op 0xa = Quit()
+function clause execute Quit() = quit = true
+
 union clause instr = NewLine : unit
 function clause decode_0op 0xb = NewLine()
 function clause execute NewLine() = print_endline("")
+
+union clause instr = Verify : branch
+function clause decode_0op (0xd if version >= 3) = Verify(fetch_branch())
+function clause decode_0op 0xd = throw MalformedInstruction("verify on version < 3")
+function clause execute Verify(branch) = {
+  let length = file_length();
+  prerr_int("length ", length);
+  // TODO: this fails the czech test, not sure why
+  var checksum : bits(16) = 0x0000;
+  foreach (i from 64 to (length - 1)) {
+    checksum = checksum + sail_zero_extend(read_byte(add_bits_int(0x00000, i)), 16)
+  };
+  perform_branch(branch, checksum == read_word(0x0001c));
+}
+
+union clause instr = Piracy : branch
+function clause decode_0op (0xf if version >= 5) = Piracy(fetch_branch())
+function clause decode_0op 0xf = throw MalformedInstruction("piracy on version < 3")
+function clause execute Piracy(branch) = perform_branch(branch, genuine_flag)
+
 
 union clause instr = PutProp : (operand, operand, operand)
 function clause decode_var (0b00011, [| object, property, value |]) = PutProp(object, property, value)
@@ -274,28 +398,20 @@ function clause decode_var (0b00110, operands) =
   }
 function clause execute PrintNum(n) = print(dec_str(signed(n)))
 
+union clause instr = CallVs2 : (address, list(operand), bits(8))
+function clause decode_var ((0b01100, routine::args) if version >= 4) = CallVs2(unpack_address(routine, PackCall), args, fetch_result_destination())
+function clause decode_var ((0b01100, [| |]) if version >= 4) = throw MalformedInstruction("call_vs2 without routine")
+function clause decode_var  (0b01100, _) = throw MalformedInstruction("call_vs2 on version < 4")
+function clause execute CallVs2(routine, args, r) = routine_call(routine, args, Some(r))
+
 union clause instr = Call : (address, list(operand), bits(8))
 function clause decode_var (0b00000, operands) =
   match operands {
     [| |] => throw MalformedInstruction("call without routine"),
     routine::arguments => Call(unpack_address(routine, PackCall), arguments, fetch_result_destination()),
   }
-function clause execute Call(routine, arguments, destination) =
-  if routine == 0x00000 then write_variable(destination, 0x0000) else {
-  //prerr_bits("routine ", routine);
-  let number_locals = unsigned(read_byte(routine));
-  let locals_from_arguments : list(bits(16)) = list_take(arguments, number_locals);
-  var new_locals : list(bits(16)) = [| |];
-  foreach (i from number_locals downto (length(locals_from_arguments) + 1)) {
-    let v = if version < 5 then read_word(add_bits_int(routine, 2*i)) else 0x0000;
-    new_locals = v::new_locals;
-  };
-  new_locals = locals_from_arguments @ new_locals;
-  routine_stack = (locals, stack, Some(destination), PC)::routine_stack;
-  locals = new_locals;
-  stack = [| |];
-  PC = add_bits_int(routine, 2*number_locals+1);
-  //prerr_bits("new pc ", PC)
+function clause execute Call(routine, arguments, destination) = {
+  if routine == 0x00000 then write_variable(destination, 0x0000) else routine_call(routine, arguments, Some(destination))
 }
 
 union clause instr = StoreW : (operand, operand, operand)
@@ -304,7 +420,7 @@ function clause decode_var (0b00001, operands) = match operands {
   _ => throw MalformedInstruction("storeb without 3 operands")
 }
 function clause execute StoreW(array, index, value) = {
-  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20);
+  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20) << 1;
   if addr >_u 0x0fffe then throw LoadAddressOverflow(addr);
   write_word(addr, value)
 }
@@ -320,6 +436,52 @@ function clause execute StoreB(array, index, value) = {
   if value >_u 0x00ff then warn("Oversize byte store"); // Not sure if this is allowed
   write_byte(addr, truncate(value, 8))
 }
+
+union clause instr = Random : (operand, bits(8))
+function clause decode_var (0b00111, [| range |]) = Random(range, fetch_result_destination())
+function clause decode_var (0b00111, _) = throw MalformedInstruction("random with wrong operands")
+function clause execute Random(range, r) = {
+  let range = signed(range);
+  if range > 0 then write_variable(r, add_bits_int(0x0000, random_range(1, range))) else
+  if range == 0 then { prerr("Warning range called with zero"); write_variable(r, 0x0000) } else {
+    random_seed(0 - range);
+    write_variable(r, 0x0000);
+  }
+}
+
+union clause instr = Push : operand
+function clause decode_var (0b01000, [| value |]) = Push(value)
+function clause decode_var (0b01000, _) = throw MalformedInstruction("push with wrong operands")
+function clause execute Push(value) = push(value)
+
+union clause instr = Pull : bits(8)
+function clause decode_var (0b01001, [| variable |]) = Pull(decode_variable(variable))
+// TODO: version 6 behaviour
+function clause execute Pull(variable) = write_variable_no_push(variable, pop())
+
+union clause instr = Not5 : (operand, bits(8))
+function clause decode_var ((0b11000, [| vl |]) if version >= 5) = Not5(vl, fetch_result_destination())
+function clause decode_var ((0b11000, _) if version >= 5) = throw MalformedInstruction("Not with wrong operands")
+function clause decode_var  (0b11000, _) = throw MalformedInstruction("Not on version < 5")
+function clause execute Not5(value, r) = write_variable(r, not_vec(value))
+
+union clause instr = CallVn : (address, list(operand))
+function clause decode_var ((0b11001, routine::args) if version >= 5) = CallVn(unpack_address(routine, PackCall), args)
+function clause decode_var ((0b11001, _) if version >=5) = throw MalformedInstruction("call_vn without routine")
+function clause decode_var (0b11001, _) = throw MalformedInstruction("call_vn on version < 5")
+function clause execute CallVn(routine, args) = routine_call(routine, args, None())
+
+union clause instr = CallVn2 : (address, list(operand))
+function clause decode_var ((0b11010, routine::args) if version >= 5) = CallVn2(unpack_address(routine, PackCall), args)
+function clause decode_var ((0b11010, [| |]) if version >= 5) = throw MalformedInstruction("call_vn2 without routine")
+function clause decode_var  (0b11010, _) = throw MalformedInstruction("call_vn2 on version < 5")
+function clause execute CallVn2(routine, args) = routine_call(routine, args, None())
+
+union clause instr = CheckArgCount : (operand, branch)
+function clause decode_var ((0b11111, [| number |]) if version >= 5) = CheckArgCount(number, fetch_branch())
+function clause decode_var ((0b11111, _) if version >= 5) = throw MalformedInstruction("check_arg_count with wrong operands")
+function clause decode_var (0b11111, _) = throw MalformedInstruction("check_arg_count on version < 5")
+function clause execute CheckArgCount(number, branch) = perform_branch(branch, unsigned(number) <= number_arguments)
 
 union clause instr = Read : (operand, operand, option((operand, address)))
 function clause decode_var (0b00100, [| text, parse |]) = Read(text, parse, None())
@@ -426,7 +588,7 @@ function clause execute Read(text, parse, timer) = {
       if char == 0x20 then j = j + 1
       else if byte_is_in(word_separators, char) then {
         let (encoded, _) = encode_zscii(empty_entry, 0, char);
-        let word_entry = add_bits_int(parse_addr, 1 + 4 * words);
+        let word_entry = add_bits_int(parse_addr, 2 + 4 * words);
         let dictionary_entry = lookup_entry(dictionary_info, pack_zchars(encoded));
         // TODO: if dictionary_entry >_u 0x0ffff then
         write_word(word_entry, truncate(dictionary_entry, 16));
@@ -457,14 +619,34 @@ function clause execute Read(text, parse, timer) = {
   }
 }
 
+union clause instr = LogShift : (operand, operand, bits(8))
+function clause decode_ext (0x02, [| value, places |]) = LogShift(value, places, fetch_result_destination())
+function clause decode_ext (0x02, _) = throw MalformedInstruction("log_shift with bad operands")
+function clause execute LogShift(value, places, r) = {
+  let shift = signed(places);
+  let result = if shift >= 0 then value << shift else value >> (0 - shift);
+  write_variable(r, result)
+}
+
+union clause instr = ArtShift : (operand, operand, bits(8))
+function clause decode_ext (0x03, [| value, places |]) = ArtShift(value, places, fetch_result_destination())
+function clause decode_ext (0x03, _) = throw MalformedInstruction("art_shift with bad operands")
+function clause execute ArtShift(value, places, r) = {
+  let shift = signed(places);
+  let result = if shift >= 0 then value << shift else value >>> (0 - shift);
+  write_variable(r, result)
+}
+
 function clause decode_0op op = unimplemented("Unmodelled 0op instruction " @ bits_str(op))
 function clause decode_1op (op,_) = unimplemented("Unmodelled 1op instruction " @ bits_str(op))
 function clause decode_2op (op,_,_) = unimplemented("Unmodelled 2op instruction " @ bits_str(op))
 function clause decode_var (op,_) = unimplemented("Unmodelled var instruction " @ bits_str(op))
+function clause decode_ext (op,_) = unimplemented("Unmodelled ext instruction " @ bits_str(op))
 
 end decode_0op
 end decode_1op
 end decode_2op
 end decode_var
+end decode_ext
 end instr
 end execute

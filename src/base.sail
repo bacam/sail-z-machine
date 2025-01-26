@@ -1,4 +1,7 @@
 register configuration version : range(1,8) = 3
+register configuration genuine_flag : bool = true
+
+register quit : bool = false
 
 type operand = bits(16)
 
@@ -14,6 +17,7 @@ union exception = {
   BadAttribute : (bits(16), bits(16)),
   PropertyNotFound : (bits(16), bits(16)),
   WrongPropertySize : (bits(16), bits(16)),
+  DivisionByZero : unit,
   Unreachable : unit,
 }
 

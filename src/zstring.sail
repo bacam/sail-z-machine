@@ -30,7 +30,7 @@ let a2_later : vector(32, bits(10)) = [
   0b0000000000, // dummy
   0b0000000000, // dummy
   0b0000000000, // dummy
-  0b0000001011, // carriage return (newline)
+  0b0000001101, // carriage return (newline)
   0b0000110000, // 0
   0b0000110001, // 1
   0b0000110010, // 2
