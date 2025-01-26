@@ -135,7 +135,8 @@ function clause execute InsertObj(object, destination) = {
 union clause instr = LoadW : (operand, operand, bits(8))
 function clause decode_2op (0b01111, x, y) = LoadW(x,y,fetch_result_destination())
 function clause execute LoadW(array, index, destination) = {
-  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20) << 1;
+  // The spec doesn't explicitly say so, but praxix expects that the index is signed
+  let addr = sail_zero_extend(array, 20) + sail_sign_extend(index, 20) << 1;
   if addr >_u 0x0fffe then throw LoadAddressOverflow(addr);
   write_variable(destination, read_word(addr))
 }
@@ -143,7 +144,8 @@ function clause execute LoadW(array, index, destination) = {
 union clause instr = LoadB : (operand, operand, bits(8))
 function clause decode_2op (0b10000, x, y) = LoadB(x,y,fetch_result_destination())
 function clause execute LoadB(array, index, destination) = {
-  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20);
+  // The spec doesn't explicitly say so, but praxix expects that the index is signed
+  let addr = sail_zero_extend(array, 20) + sail_sign_extend(index, 20);
   if addr >_u 0x0ffff then throw LoadAddressOverflow(addr);
   write_variable(destination, sail_zero_extend(read_byte(addr), 16))
 }
@@ -420,7 +422,8 @@ function clause decode_var (0b00001, operands) = match operands {
   _ => throw MalformedInstruction("storeb without 3 operands")
 }
 function clause execute StoreW(array, index, value) = {
-  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20) << 1;
+  // The spec doesn't explicitly say so, but praxix expects that the index is signed
+  let addr = sail_zero_extend(array, 20) + sail_sign_extend(index, 20) << 1;
   if addr >_u 0x0fffe then throw LoadAddressOverflow(addr);
   write_word(addr, value)
 }
@@ -431,7 +434,8 @@ function clause decode_var (0b00010, operands) = match operands {
   _ => throw MalformedInstruction("storeb without 3 operands")
 }
 function clause execute StoreB(array, index, value) = {
-  let addr = sail_zero_extend(array, 20) + sail_zero_extend(index, 20);
+  // The spec doesn't explicitly say so, but praxix expects that the index is signed
+  let addr = sail_zero_extend(array, 20) + sail_sign_extend(index, 20);
   if addr >_u 0x0ffff then throw LoadAddressOverflow(addr);
   if value >_u 0x00ff then warn("Oversize byte store"); // Not sure if this is allowed
   write_byte(addr, truncate(value, 8))
@@ -459,6 +463,14 @@ function clause decode_var (0b01001, [| variable |]) = Pull(decode_variable(vari
 // TODO: version 6 behaviour
 function clause execute Pull(variable) = write_variable_no_push(variable, pop())
 
+union clause instr = SetTextStyle : operand
+function clause decode_var ((0b10001, [| style |]) if version >= 4) = SetTextStyle(style)
+function clause decode_var  (0b10001, _) = throw MalformedInstruction("set_text_style on version < 4")
+function clause execute SetTextStyle(style) = {
+  // TODO
+  prerr_bits("unimplemented set_text_style ", style);
+}
+
 union clause instr = Not5 : (operand, bits(8))
 function clause decode_var ((0b11000, [| vl |]) if version >= 5) = Not5(vl, fetch_result_destination())
 function clause decode_var ((0b11000, _) if version >= 5) = throw MalformedInstruction("Not with wrong operands")
@@ -483,10 +495,11 @@ function clause decode_var ((0b11111, _) if version >= 5) = throw MalformedInstr
 function clause decode_var (0b11111, _) = throw MalformedInstruction("check_arg_count on version < 5")
 function clause execute CheckArgCount(number, branch) = perform_branch(branch, unsigned(number) <= number_arguments)
 
-union clause instr = Read : (operand, operand, option((operand, address)))
-function clause decode_var (0b00100, [| text, parse |]) = Read(text, parse, None())
+union clause instr = Read : (operand, operand, option((operand, address)), option(bits(8)))
+// The spec doesn't say that there's a two operand form in v5, but it's used in the praxix test
+function clause decode_var (0b00100, [| text, parse |]) = Read(text, parse, None(), if version >= 5 then Some(fetch_result_destination()) else None())
 function clause decode_var ((0b00100, [| text, parse, time, routine |]) if version >= 4) =
-  Read(text, parse, Some((time, unpack_address(routine, PackCall))))
+  Read(text, parse, Some((time, unpack_address(routine, PackCall))), if version >= 5 then Some(fetch_result_destination()) else None())
 function clause decode_var (0b00100, _) = throw MalformedInstruction("read with wrong number of operands")
 
 val byte_is_in : forall 'n. (implicit('n), vector('n, dec, bits(8)), bits(8)) -> bool
@@ -530,7 +543,7 @@ function lookup_entry(size_zchars, dictionary, zchars) = {
   0x00000
 }
 
-function clause execute Read(text, parse, timer) = {
+function clause execute Read(text, parse, timer, r) = {
   // TODO: status line
   let text_addr = sail_zero_extend(text, 20);
   let existing_characters = if version >= 5 then unsigned(read_byte(text_addr + 0x00001)) else 0;
@@ -548,6 +561,7 @@ function clause execute Read(text, parse, timer) = {
     match string_destruct(s) {
       None() => more = false,
       Some(c,t) => {
+        // TODO: terminating characters table
         if c == 10 then more = false else {
           s = t;
 	  write_byte(add_bits_int(new_start_addr, i), add_bits_int(0x00, c));
@@ -616,6 +630,12 @@ function clause execute Read(text, parse, timer) = {
       }
     };
     write_byte(parse_addr + 0x00001, add_bits_int(0x00, words));
+  };
+  // i.e., version >= 5
+  // TODO: use the actual terminating character
+  match r {
+    None() => (),
+    Some(r') => write_variable(r', 0x000d),
   }
 }
 
@@ -624,8 +644,13 @@ function clause decode_ext (0x02, [| value, places |]) = LogShift(value, places,
 function clause decode_ext (0x02, _) = throw MalformedInstruction("log_shift with bad operands")
 function clause execute LogShift(value, places, r) = {
   let shift = signed(places);
-  let result = if shift >= 0 then value << shift else value >> (0 - shift);
-  write_variable(r, result)
+  if shift < -15 | shift > 15 then {
+    warn("out over range shift " @ dec_str(shift) @ " at ");
+    write_variable(r, 0x0000)
+  } else {
+    let result = if shift >= 0 then value << shift else value >> (0 - shift);
+    write_variable(r, result)
+  }
 }
 
 union clause instr = ArtShift : (operand, operand, bits(8))
@@ -633,8 +658,22 @@ function clause decode_ext (0x03, [| value, places |]) = ArtShift(value, places,
 function clause decode_ext (0x03, _) = throw MalformedInstruction("art_shift with bad operands")
 function clause execute ArtShift(value, places, r) = {
   let shift = signed(places);
-  let result = if shift >= 0 then value << shift else value >>> (0 - shift);
-  write_variable(r, result)
+  if shift < -15 | shift > 15 then {
+    warn("out over range shift " @ dec_str(shift) @ " at ");
+    write_variable(r, if shift < -15 then replicate_bits(value[15..15], 16) else 0x0000)
+  } else {
+    let result = if shift >= 0 then value << shift else value >>> (0 - shift);
+    write_variable(r, result)
+  }
+}
+
+union clause instr = SaveUndo : bits(8)
+function clause decode_ext ((0x09, [| |]) if version >= 5) = SaveUndo(fetch_result_destination())
+function clause decode_ext ((0x09, _) if version >= 5) = throw MalformedInstruction("save_undo with operands")
+function clause decode_ext  (0x09, _) = throw MalformedInstruction("save_undo when version < 5")
+function clause execute SaveUndo(r) = {
+  // TODO: undo
+  write_variable(r, 0xffff)
 }
 
 function clause decode_0op op = unimplemented("Unmodelled 0op instruction " @ bits_str(op))
