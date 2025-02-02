@@ -17,7 +17,8 @@ function main() -> unit = {
       instr_pc = PC;
       //prerr_bits("PC: ", PC);
       let instr = fetch_and_decode();
-      execute(instr)
+      //prerr_endline(describe(instr));
+      execute(resolve_instr(instr))
     }
   } catch {
     Unimplemented(s) => prerr_bits("Unimplemented: " @ s @ " at ", instr_pc),

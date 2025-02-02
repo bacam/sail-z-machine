@@ -4,7 +4,9 @@ $include <mapping.sail>
 $include <smt.sail>
 
 overload operator - = { sub_bits }
-overload append = { concat_str }
+// Word around Sail C bug
+function concat_str2(s : string, s' : string) -> string = let s'' = concat_str(s,s') in s''
+overload append = { concat_str2 }
 
 val "string_hd" : string -> int
 function string_destruct(s : string) -> option((int, string)) = {

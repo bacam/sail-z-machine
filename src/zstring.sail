@@ -206,6 +206,8 @@ function print_zscii_string(s : list(zscii)) -> unit = {
   }
 }
 
+function zscii_to_string(s : list(zscii)) -> string = "TODO"
+
 val encode_zscii : forall 'n. (implicit('n), vector('n, bits(5)), nat, bits(8)) -> (vector('n, bits(5)), nat)
 
 function encode_zscii(dest_size, dest, start, char) = {

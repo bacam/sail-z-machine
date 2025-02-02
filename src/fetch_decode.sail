@@ -3,7 +3,7 @@ function to_type(t : bits(2)) -> operand_type =
   match t {
   0b00 => LargeConst,
   0b01 => SmallConst,
-  0b10 => Variable,
+  0b10 => FetchVariable,
   0b11 => Omitted,
   }
 
@@ -15,10 +15,10 @@ function fetch_byte() = {
   byte
 }
 
-function fetch_long_operand(ty : bits(1)) -> bits(16) =
+function fetch_long_operand(ty : bits(1)) -> operand =
   match ty {
-  0b0 => sail_zero_extend(fetch_byte(), 16),
-  0b1 => read_variable(fetch_byte())
+  0b0 => Constant(sail_zero_extend(fetch_byte(), 16)),
+  0b1 => Variable(fetch_byte())
   }
 
 function fetch_result_destination() = fetch_byte()
@@ -29,15 +29,19 @@ function fetch_string() = {
   string
 }
 
-function fetch_operand(ty : operand_type) -> bits(16) = {
+function fetch_operand(ty : operand_type) -> operand = {
   match ty {
     Omitted => unreachable("Omitted operand type where operand expected"),
-    SmallConst => sail_zero_extend(fetch_byte(), 16),
-    LargeConst => fetch_byte() @ fetch_byte(),
-    Variable => {
-      let variable = fetch_byte();
-      read_variable(variable)
-    }
+    SmallConst => Constant(sail_zero_extend(fetch_byte(), 16)),
+    LargeConst => Constant(fetch_byte() @ fetch_byte()),
+    FetchVariable => Variable(fetch_byte()),
+  }
+}
+
+function resolve_operand(v : operand) -> bits(16) = {
+  match v {
+    Constant(vl) => vl,
+    Variable(vr) => read_variable(vr),
   }
 }
 
@@ -78,13 +82,13 @@ function fetch_branch() -> branch = {
   struct { direction, offset }
 }
 
-function fetch_and_decode() -> instr = {
+function fetch_and_decode() -> instr(operand) = {
   let opcode1 = fetch_byte();
   match opcode1 {
     0xbe if version >= 5 => {
       let op = fetch_byte();
       var operand_types = fetch_var_operand_types();
-      var operands : list(bits(16)) = [| |];
+      var operands : list(operand) = [| |];
       while is_cons(operand_types) do {
         let (ty,tys) = head_tail(operand_types);
 	operands = fetch_operand(ty)::operands;
@@ -104,7 +108,7 @@ function fetch_and_decode() -> instr = {
 	  operand_types = operand_types @ types2
 	}
       };
-      var operands : list(bits(16)) = [| |];
+      var operands : list(operand) = [| |];
       while is_cons(operand_types) do {
         let (ty,tys) = head_tail(operand_types);
 	operands = fetch_operand(ty)::operands;
@@ -125,7 +129,7 @@ function fetch_and_decode() -> instr = {
       match to_type(ty) {
         Omitted => decode_0op(op),
 	ty' => {
-          let operand : bits(16) = fetch_operand(to_type(ty));
+          let operand = fetch_operand(to_type(ty));
           decode_1op(op, operand)
 	}
       }
