@@ -493,6 +493,15 @@ function clause describe RetPopped() = "ret_popped"
 function clause resolve_instr RetPopped() = RetPopped()
 function clause execute RetPopped() = routine_return(pop())
 
+union clause instr = Pop : unit
+function clause decode_0op 0x9 = Pop()
+function clause describe Pop() = "pop"
+function clause resolve_instr Pop() = Pop()
+function clause execute Pop() = {
+  let _ = pop();
+  ()
+}
+
 union clause instr = Quit : unit
 function clause decode_0op 0xa = Quit()
 function clause describe Quit() = "quit"
