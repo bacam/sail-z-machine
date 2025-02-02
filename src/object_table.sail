@@ -122,11 +122,10 @@ function get_next_property(object : bits(16), property : bits(16)) -> bits(16) =
 }
 
 function get_property_length(property : address) -> bits(16) = {
-  if property == 0x00000 then 0x0000 else
+  if property == 0x00000 then 0x0000 else {
   // TODO: address underflow
-  if version < 4 then sail_zero_extend(read_byte(property - 0x00001), 16) else {
-    let b = read_byte(property - 0x00001);
-    let (_, _, size, _) = read_property_size_bytes(property - (if b[7] == bitone then 0x00002 else 0x00001));
+    let size_address = if version < 4 | read_byte(property - 0x00001)[7] == bitzero then property - 0x00001 else property - 0x00002;
+    let (_, _, size, _) = read_property_size_bytes(size_address);
     add_bits_int(0x0000, size)
   }
 }
