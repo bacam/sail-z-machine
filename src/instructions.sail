@@ -565,6 +565,27 @@ function clause describe PrintNum(x) = "print_num " @ desc_op(x)
 function clause resolve_instr PrintNum(x) = PrintNum(resolve_operand(x))
 function clause execute PrintNum(n) = print(dec_str(signed(n)))
 
+union clause instr = SplitWindow : 'operand
+function clause decode_var (0b01010, [| lines |]) = SplitWindow(lines)
+function clause decode_var (0b01010, _) = throw MalformedInstruction("split_window on bad operands")
+function clause describe SplitWindow(lines) = "split_window " @ desc_op(lines)
+function clause resolve_instr SplitWindow(lines) = SplitWindow(resolve_operand(lines))
+function clause execute SplitWindow(lines) = prerr_int("split_window ", unsigned(lines)) // TODO
+
+union clause instr = SetWindow : 'operand
+function clause decode_var (0b01011, [| window |]) = SetWindow(window)
+function clause decode_var (0b01011, _) = throw MalformedInstruction("set_window on bad operands")
+function clause describe SetWindow(window) = "set_window " @ desc_op(window)
+function clause resolve_instr SetWindow(window) = SetWindow(resolve_operand(window))
+function clause execute SetWindow(window) = prerr_int("set_window ", unsigned(window)) // TODO
+
+union clause instr = SetCursor : ('operand, 'operand)
+function clause decode_var (0b01111, [| line, column |]) = SetCursor(line, column)
+function clause decode_var (0b01111, _) = throw MalformedInstruction("set_cursor on bad operands")
+function clause describe SetCursor(line, column) = "set_cursor " @ desc_op(line) @ " " @ desc_op(column)
+function clause resolve_instr SetCursor(line, column) = SetCursor(resolve_operand(line), resolve_operand(column))
+function clause execute SetCursor(line, column) = prerr_endline("set_cursor " @ dec_str(unsigned(line)) @ " " @ dec_str(unsigned(column))) // TODO
+
 union clause instr = CallVs2 : ('operand, list('operand), bits(8))
 function clause decode_var ((0b01100, routine::args) if version >= 4) = CallVs2(routine, args, fetch_result_destination())
 function clause decode_var ((0b01100, [| |]) if version >= 4) = throw MalformedInstruction("call_vs2 without routine")
