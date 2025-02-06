@@ -24,7 +24,7 @@ void random_range(sail_int *r, sail_int low_s, sail_int high_s) {
   mach_int low = CREATE_OF(mach_int, sail_int)(low_s);
   mach_int high = CREATE_OF(mach_int, sail_int)(high_s);
   /* rand should go high enough, only have 16bit values */
-  mpz_set_ui(*r, low + (rand() % (high -low)));
+  mpz_set_ui(*r, low + (rand() % (high -low + 1)));
 }
 unit random_seed(sail_int seed_s) {
   mach_int seed = CREATE_OF(mach_int, sail_int)(seed_s);
