@@ -28,6 +28,14 @@ function desc_op(x : operand) -> string = {
   }
 }
 
+function desc_opt_op(x : option(operand)) -> string = {
+  match x {
+    Some(Constant(bs)) => " " @ hex_str(unsigned(bs)),
+    Some(Variable(vr)) => " " @ hex_str(unsigned(vr)),
+    None() => ""
+  }
+}
+
 function desc_op_list(xs : list(operand)) -> string = {
   var l = xs;
   var s = "[";
@@ -46,6 +54,13 @@ function desc_branch(b : branch) -> string = {
 }
 
 function desc_r(r : bits(8)) -> string = " -> " @ hex_str(unsigned(r))
+
+function resolve_opt_operand(x : option(operand)) -> option(bits(16)) = {
+  match x {
+    Some(y) => Some(resolve_operand(y)),
+    None() => None(),
+  }
+}
 
 function resolve_operand_list(l : list(operand)) -> list(bits(16)) = {
   var l_in = l;
@@ -698,6 +713,22 @@ function clause describe CallVn2(a, bs) = "callvn2 " @ desc_op(a) @ " " @ desc_o
 function clause resolve_instr CallVn2(x, xs) = CallVn2(resolve_operand(x), resolve_operand_list(xs))
 function clause execute CallVn2(routine, args) = routine_call(unpack_address(routine, PackCall), args, None())
 
+union clause instr = Tokenise : ('operand, 'operand, option('operand), option('operand))
+function clause decode_var ((0b11011, [| text, parse |]) if version >= 5) = Tokenise(text, parse, None(), None())
+function clause decode_var ((0b11011, [| text, parse, dict |]) if version >= 5) = Tokenise(text, parse, Some(dict), None())
+function clause decode_var ((0b11011, [| text, parse, dict, flag |]) if version >= 5) = Tokenise(text, parse, Some(dict), Some(flag))
+function clause decode_var  (0b11011, _) = throw MalformedInstruction(if version >= 5 then "tokenise on version < 5" else "tokenise with wrong operands")
+function clause describe Tokenise(text, parse, dict, flag) = "tokenise " @ desc_op(text) @ " " @ desc_op(parse) @ desc_opt_op(dict) @ desc_opt_op(flag)
+function clause resolve_instr Tokenise(text, parse, dict, flag) = Tokenise(resolve_operand(text), resolve_operand(parse), resolve_opt_operand(dict), resolve_opt_operand(flag))
+function clause execute Tokenise(text, parse, dict, flag) = {
+  let text_addr = sail_zero_extend(text, 20);
+  let dictionary : address = match dict { None() => sail_zero_extend(read_word(0x00008), 20), Some(d) => sail_zero_extend(d, 20) };
+  // The spec doesn't actually say that text is formatted in the same way as read
+  let total_characters = unsigned(read_byte(text_addr + 0x00001));
+  let skip_unrecognised : bool = match flag { Some(b) => b != 0x0000, None() => false };
+  tokenise(text_addr, total_characters, sail_zero_extend(parse, 20), dictionary, is_some(dict), skip_unrecognised);
+}
+
 union clause instr = CheckArgCount : ('operand, branch)
 function clause decode_var ((0b11111, [| number |]) if version >= 5) = CheckArgCount(number, fetch_branch())
 function clause decode_var ((0b11111, _) if version >= 5) = throw MalformedInstruction("check_arg_count with wrong operands")
@@ -714,47 +745,6 @@ function clause decode_var ((0b00100, [| text, parse, time, routine |]) if versi
 function clause decode_var (0b00100, _) = throw MalformedInstruction("read with wrong number of operands")
 function clause describe Read(x, y, z, r) = "read " @ desc_op(x) @ " " @ desc_op(y) @ " " @ (match z { Some((a, b)) => desc_op(a) @ " " @ desc_op(b) @ " ", None() => ""}) @ (match r { Some(r') => desc_r(r'), None() => "" })
 function clause resolve_instr Read(x, y, z, r) = Read(resolve_operand(x), resolve_operand(y), match z { Some((a, b)) => Some((resolve_operand(a), resolve_operand(b))), None() => None() }, r)
-
-val byte_is_in : forall 'n. (implicit('n), vector('n, dec, bits(8)), bits(8)) -> bool
-
-function byte_is_in(size, chars, char) = {
-  var found : bool = false;
-  foreach (i from 0 to (size - 1)) {
-    if chars[i] == char then found = true;
-  };
-  found
-}
-
-struct dictionary_info = {
-  entry_length : nat,
-  number_entries : nat,
-  entries_start : address,
-}
-
-function read_dictionary_info(dictionary : address, number_word_separators : nat) -> dictionary_info = {
-  let info : dictionary_info = struct {
-    entry_length = unsigned(read_byte(add_bits_int(dictionary, number_word_separators + 1))),
-    number_entries = unsigned(read_word(add_bits_int(dictionary, number_word_separators + 2))),
-    entries_start = add_bits_int(dictionary, number_word_separators + 4),
-  };
-  if info.entry_length < (if version <= 3 then 4 else 6) then throw InvalidDictionaryEntryLength(info.entry_length);
-  info
-}
-
-val lookup_entry : forall 'n. (implicit('n), dictionary_info, vector('n, bits(8))) -> address
-
-function lookup_entry(size_zchars, dictionary, zchars) = {
-  // We ought to be able to do a binary search here, but keep it simple
-  foreach (i from 1 to dictionary.number_entries) {
-    let entry = add_bits_int(dictionary.entries_start, i * dictionary.entry_length);
-    var found : bool = true;
-    foreach (j from 0 to (size_zchars - 1)) {
-      found = found & read_byte(add_bits_int(entry, j)) == zchars[j]
-    };
-    if found then return entry;
-  };
-  0x00000
-}
 
 function clause execute Read(text, parse, timer, r) = {
   // TODO: status line
@@ -793,56 +783,8 @@ function clause execute Read(text, parse, timer, r) = {
   // Perform lexical analysis
   if parse != 0x0000 | version < 5 then {
     let parse_addr = sail_zero_extend(parse, 20);
-    let max_words = unsigned(read_byte(parse_addr));
     let dictionary = sail_zero_extend(read_word(0x00008), 20);
-    let 'number_word_separators = unsigned(read_byte(dictionary));
-    var word_separators : vector('number_word_separators + 1, bits(8)) = vector_init(0x32);
-    if number_word_separators >= 1 then {
-      foreach (i from 1 to number_word_separators) {
-        word_separators[i] = read_byte(add_bits_int(dictionary, i))
-      }
-    };
-    let dictionary_info = read_dictionary_info(dictionary, number_word_separators);
-
-    var j : int = 0;
-    var words : int = 0;
-    let start_addr = add_bits_int(text_addr, if version < 5 then 1 else 2);
-    let 'encode_triplets = if version <= 3 then 2 else 3;
-    let empty_entry : vector('encode_triplets * 3, bits(5)) = vector_init(0b00101);
-
-    while words < max_words & j < total_characters do {
-      var char = read_byte(add_bits_int(start_addr, j));
-      if char == 0x20 then j = j + 1
-      else if byte_is_in(word_separators, char) then {
-        let (encoded, _) = encode_zscii(empty_entry, 0, char);
-        let word_entry = add_bits_int(parse_addr, 2 + 4 * words);
-        let dictionary_entry = lookup_entry(dictionary_info, pack_zchars(encoded));
-        // TODO: if dictionary_entry >_u 0x0ffff then
-        write_word(word_entry, truncate(dictionary_entry, 16));
-	write_byte(word_entry + 0x00002, 0x01);
-	write_byte(word_entry + 0x00003, add_bits_int(0x00, j));
-	words = words + 1;
-	j = j + 1;
-      } else {
-        var k : int = 0;
-        var encoded_i : nat = 0;
-        var encoded = empty_entry;
-        while j + k < total_characters & char != 0x20 & not_bool(byte_is_in(word_separators, char)) do {
-          (encoded, encoded_i) = encode_zscii(encoded, encoded_i, char);
-          k = k + 1;
-          if j + k < total_characters then char = read_byte(add_bits_int(start_addr, j + k));
-        };
-        let word_entry = add_bits_int(parse_addr, 2 + 4 * words);
-        let dictionary_entry = lookup_entry(dictionary_info, pack_zchars(encoded));
-        // TODO: if dictionary_entry >_u 0x0ffff then
-        write_word(word_entry, truncate(dictionary_entry, 16));
-	write_byte(word_entry + 0x00002, add_bits_int(0x00, k));
-	write_byte(word_entry + 0x00003, add_bits_int(0x00, j));
-	words = words + 1;
-        j = j + k;
-      }
-    };
-    write_byte(parse_addr + 0x00001, add_bits_int(0x00, words));
+    tokenise(text_addr, total_characters, parse_addr, dictionary, false, false);
   };
   // i.e., version >= 5
   // TODO: use the actual terminating character
