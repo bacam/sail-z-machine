@@ -59,6 +59,15 @@ function set_object_child(object : bits(16), child : bits(16)) -> unit = {
   else write_word(object_addr(object) + 0x0000a, child)
 }
 
+function remove_object(object : bits(16)) -> unit = {
+  let parent = object_parent(object);
+  var sibling = object_child(parent);
+  if sibling == object then set_object_child(parent, object_sibling(object)) else {
+    while sibling != 0x0000 & object_sibling(sibling) != object do sibling = object_sibling(sibling);
+    if sibling != 0x0000 then set_object_sibling(sibling, object_sibling(object));
+  };
+}
+
 function read_property_size_bytes(addr : address) -> (bool, address, int, int) = {
   if version <= 3 then {
     let b = read_byte(addr);

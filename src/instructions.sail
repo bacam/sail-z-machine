@@ -210,6 +210,7 @@ function clause describe InsertObj(a, b) = "insert_obj " @ desc_op(a) @ " " @ de
 function clause resolve_instr InsertObj(obj, dest) = InsertObj(resolve_operand(obj), resolve_operand(dest))
 function clause execute InsertObj(object, destination) = {
   // TODO: Should we remove object beforehand?
+  remove_object(object);
   set_object_parent(object, destination);
   set_object_sibling(object, object_child(destination));
   set_object_child(destination, object);
@@ -409,12 +410,7 @@ function clause decode_1op (0x9, obj) = RemoveObj(obj)
 function clause describe RemoveObj(x) = "remove_obj " @ desc_op(x)
 function clause resolve_instr RemoveObj(obj) = RemoveObj(resolve_operand(obj))
 function clause execute RemoveObj(object) = {
-  let parent = object_parent(object);
-  var sibling = object_child(parent);
-  if sibling == object then set_object_child(parent, object_sibling(object)) else {
-    while sibling != 0x0000 & object_sibling(sibling) != object do sibling = object_sibling(sibling);
-    if sibling != 0x0000 then set_object_sibling(sibling, object_sibling(object));
-  };
+  remove_object(object);
   set_object_sibling(object, 0x0000);
   set_object_parent(object, 0x0000)
 }
