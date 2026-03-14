@@ -59,14 +59,16 @@ function tokenise(text : address, total_characters : int, parse : address, dicti
   };
   let dictionary_info = read_dictionary_info(dictionary, number_word_separators, user_dictionary);
 
-  var j : int = 0;
+  // Note that the stored offsets in the entries include the start offset.
+  let start_offset = if version < 5 then 1 else 2;
+  let end_offset = start_offset + total_characters;
+  var j : int = start_offset;
   var words : int = 0;
-  let start_addr = add_bits_int(text, if version < 5 then 1 else 2);
   let 'encode_triplets = if version <= 3 then 2 else 3;
   let empty_entry : vector('encode_triplets * 3, bits(5)) = vector_init(0b00101);
 
-  while words < max_words & j < total_characters do {
-    var char = read_byte(add_bits_int(start_addr, j));
+  while words < max_words & j < end_offset do {
+    var char = read_byte(add_bits_int(text, j));
     if char == 0x20 then j = j + 1
     else if byte_is_in(word_separators, char) then {
       let (encoded, _) = encode_zscii(empty_entry, 0, char);
@@ -84,10 +86,10 @@ function tokenise(text : address, total_characters : int, parse : address, dicti
       var k : int = 0;
       var encoded_i : nat = 0;
       var encoded = empty_entry;
-      while j + k < total_characters & char != 0x20 & not_bool(byte_is_in(word_separators, char)) do {
+      while j + k < end_offset & char != 0x20 & not_bool(byte_is_in(word_separators, char)) do {
         (encoded, encoded_i) = encode_zscii(encoded, encoded_i, char);
         k = k + 1;
-        if j + k < total_characters then char = read_byte(add_bits_int(start_addr, j + k));
+        if j + k < end_offset then char = read_byte(add_bits_int(text, j + k));
       };
       let word_entry = add_bits_int(parse, 2 + 4 * words);
       let dictionary_entry = lookup_entry(dictionary_info, pack_zchars(encoded));
